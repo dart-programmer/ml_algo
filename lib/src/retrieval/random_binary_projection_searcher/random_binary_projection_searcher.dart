@@ -1,4 +1,5 @@
 import 'package:ml_algo/src/common/serializable/serializable_mixin.dart';
+import 'package:ml_algo/src/persistence/neighbor_search_store.dart';
 import 'package:ml_algo/src/retrieval/neighbour.dart';
 import 'package:ml_algo/src/retrieval/random_binary_projection_searcher/helpers/create_random_binary_projection_searcher.dart';
 import 'package:ml_algo/src/retrieval/random_binary_projection_searcher/random_binary_projection_searcher_impl.dart';
@@ -236,4 +237,54 @@ abstract class RandomBinaryProjectionSearcher with SerializableMixin {
   /// ```
   Iterable<Neighbour> query(Vector point, int k, int searchRadius,
       {Distance distance = Distance.euclidean});
+
+  /// Saves this searcher instance to a [NeighborSearchStore].
+  ///
+  /// Returns the [searcherId] that can be used to retrieve the searcher later.
+  /// If [searcherId] is provided, it will be used; otherwise, a unique ID will be generated.
+  ///
+  /// Example:
+  ///
+  /// ```dart
+  /// import 'package:ml_algo/ml_algo.dart';
+  /// import 'package:ml_algo/src/persistence/sqlite_neighbor_search_store.dart';
+  ///
+  /// void main() async {
+  ///   final store = SQLiteNeighborSearchStore('path/to/database.db');
+  ///   final searcher = RandomBinaryProjectionSearcher(data, 6);
+  ///
+  ///   final searcherId = await searcher.saveToStore(store);
+  ///   print('Searcher saved with ID: $searcherId');
+  /// }
+  /// ```
+  Future<String> saveToStore(NeighborSearchStore store, {String? searcherId});
+
+  /// Loads a [RandomBinaryProjectionSearcher] instance from a [NeighborSearchStore].
+  ///
+  /// Returns `null` if the searcher with the given [searcherId] does not exist.
+  ///
+  /// Example:
+  ///
+  /// ```dart
+  /// import 'package:ml_algo/ml_algo.dart';
+  /// import 'package:ml_algo/src/persistence/sqlite_neighbor_search_store.dart';
+  ///
+  /// void main() async {
+  ///   final store = SQLiteNeighborSearchStore('path/to/database.db');
+  ///   final searcherId = 'my-searcher-id';
+  ///
+  ///   final searcher = await RandomBinaryProjectionSearcher.loadFromStore(
+  ///     store,
+  ///     searcherId,
+  ///   );
+  ///
+  ///   if (searcher != null) {
+  ///     final neighbours = searcher.query(point, k, searchRadius);
+  ///   }
+  /// }
+  /// ```
+  static Future<RandomBinaryProjectionSearcher?> loadFromStore(
+    NeighborSearchStore store,
+    String searcherId,
+  );
 }
