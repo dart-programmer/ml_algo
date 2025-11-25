@@ -1,4 +1,5 @@
 import 'package:ml_algo/src/common/serializable/serializable_mixin.dart';
+import 'package:ml_algo/src/persistence/neighbor_search_store.dart';
 import 'package:ml_algo/src/retrieval/neighbour.dart';
 import 'package:ml_algo/src/retrieval/random_binary_projection_searcher/helpers/create_random_binary_projection_searcher.dart';
 import 'package:ml_algo/src/retrieval/random_binary_projection_searcher/random_binary_projection_searcher_impl.dart';
@@ -236,4 +237,109 @@ abstract class RandomBinaryProjectionSearcher with SerializableMixin {
   /// ```
   Iterable<Neighbour> query(Vector point, int k, int searchRadius,
       {Distance distance = Distance.euclidean});
+
+  /// Saves this searcher instance to a [NeighborSearchStore].
+  ///
+  /// Returns the [searcherId] that can be used to retrieve the searcher later.
+  /// If [searcherId] is provided, it will be used; otherwise, a unique ID will be generated.
+  ///
+  /// Example:
+  ///
+  /// ```dart
+  /// import 'package:ml_algo/ml_algo.dart';
+  /// import 'package:ml_algo/src/persistence/sqlite_neighbor_search_store.dart';
+  ///
+  /// void main() async {
+  ///   final store = SQLiteNeighborSearchStore('path/to/database.db');
+  ///   final searcher = RandomBinaryProjectionSearcher(data, 6);
+  ///
+  ///   final searcherId = await searcher.saveToStore(store);
+  ///   print('Searcher saved with ID: $searcherId');
+  /// }
+  /// ```
+  Future<String> saveToStore(NeighborSearchStore store, {String? searcherId});
+
+  /// Loads a [RandomBinaryProjectionSearcher] instance from a [NeighborSearchStore].
+  ///
+  /// Returns `null` if the searcher with the given [searcherId] does not exist.
+  ///
+  /// Example:
+  ///
+  /// ```dart
+  /// import 'package:ml_algo/ml_algo.dart';
+  /// import 'package:ml_algo/src/persistence/sqlite_neighbor_search_store.dart';
+  ///
+  /// void main() async {
+  ///   final store = SQLiteNeighborSearchStore('path/to/database.db');
+  ///   final searcherId = 'my-searcher-id';
+  ///
+  ///   final searcher = await RandomBinaryProjectionSearcher.loadFromStore(
+  ///     store,
+  ///     searcherId,
+  ///   );
+  ///
+  ///   if (searcher != null) {
+  ///     final neighbours = searcher.query(point, k, searchRadius);
+  ///   }
+  /// }
+  /// ```
+  static Future<RandomBinaryProjectionSearcher?> loadFromStore(
+    NeighborSearchStore store,
+    String searcherId,
+  );
+
+  /// Trains a new searcher from data stored in a NeighborSearchStore.
+  ///
+  /// This method loads the underlying data from an existing searcher and retrains
+  /// a new searcher with potentially different parameters. This is useful for
+  /// retraining workflows when you want to update the searcher configuration.
+  ///
+  /// [store] is the store containing the searcher data.
+  /// [searcherId] is the ID of the searcher whose data should be used for training.
+  /// [digitCapacity] is the digit capacity for the new searcher.
+  /// [seed] is an optional seed for the new searcher.
+  /// [dtype] is the data type for the new searcher.
+  ///
+  /// Returns the newly trained searcher.
+  ///
+  /// Example:
+  ///
+  /// ```dart
+  /// import 'package:ml_algo/ml_algo.dart';
+  /// import 'package:ml_algo/src/persistence/sqlite_neighbor_search_store.dart';
+  ///
+  /// void main() async {
+  ///   final store = SQLiteNeighborSearchStore('path/to/database.db');
+  ///
+  ///   // Retrain from existing searcher data
+  ///   final retrained = await RandomBinaryProjectionSearcher.trainFromStore(
+  ///     store,
+  ///     'existing-searcher-id',
+  ///     digitCapacity: 10,
+  ///     seed: 42,
+  ///   );
+  ///
+  ///   // Save the retrained searcher
+  ///   final newId = await retrained.saveToStore(store, searcherId: 'retrained-id');
+  /// }
+  /// ```
+  static Future<RandomBinaryProjectionSearcher> trainFromStore(
+    NeighborSearchStore store,
+    String searcherId, {
+    required int digitCapacity,
+    int? seed,
+    DType dtype = DType.float32,
+  }) async {
+    final data = await store.loadSearcherData(searcherId);
+    if (data == null) {
+      throw ArgumentError('Searcher with ID $searcherId not found');
+    }
+
+    return RandomBinaryProjectionSearcher(
+      data,
+      digitCapacity,
+      seed: seed,
+      dtype: dtype,
+    );
+  }
 }

@@ -4,6 +4,7 @@ import 'package:json_annotation/json_annotation.dart';
 import 'package:ml_algo/src/common/constants/common_json_keys.dart';
 import 'package:ml_algo/src/common/serializable/serializable_mixin.dart';
 import 'package:ml_algo/src/model_selection/split_indices_provider/lpo_indices_provider.dart';
+import 'package:ml_algo/src/persistence/neighbor_search_store.dart';
 import 'package:ml_algo/src/retrieval/mixins/knn_searcher.dart';
 import 'package:ml_algo/src/retrieval/neighbour.dart';
 import 'package:ml_algo/src/retrieval/random_binary_projection_searcher/helpers/get_binary_representation.dart';
@@ -101,5 +102,37 @@ class RandomBinaryProjectionSearcherImpl
     search(point, candidateIndices, queue, k, distance);
 
     return queue.toList().reversed;
+  }
+
+  @override
+  Future<String> saveToStore(NeighborSearchStore store, {String? searcherId}) {
+    return store.saveSearcher(this, searcherId: searcherId);
+  }
+
+  static Future<RandomBinaryProjectionSearcher?> loadFromStore(
+    NeighborSearchStore store,
+    String searcherId,
+  ) {
+    return store.loadSearcher(searcherId);
+  }
+
+  static Future<RandomBinaryProjectionSearcher> trainFromStore(
+    NeighborSearchStore store,
+    String searcherId, {
+    required int digitCapacity,
+    int? seed,
+    DType dtype = DType.float32,
+  }) async {
+    final data = await store.loadSearcherData(searcherId);
+    if (data == null) {
+      throw ArgumentError('Searcher with ID $searcherId not found');
+    }
+
+    return RandomBinaryProjectionSearcher(
+      data,
+      digitCapacity,
+      seed: seed,
+      dtype: dtype,
+    );
   }
 }
