@@ -121,6 +121,10 @@ class SQLiteNeighborSearchStore implements NeighborSearchStore {
     RandomBinaryProjectionSearcher searcher, {
     String? searcherId,
   }) async {
+    if (searcherId != null && searcherId.isEmpty) {
+      throw ArgumentError('searcherId cannot be empty if provided');
+    }
+
     final db = _db!;
     final impl = searcher as RandomBinaryProjectionSearcherImpl;
 
@@ -413,6 +417,10 @@ class SQLiteNeighborSearchStore implements NeighborSearchStore {
 
   @override
   Future<DataFrame?> loadSearcherData(String searcherId) async {
+    if (searcherId.isEmpty) {
+      throw ArgumentError('searcherId cannot be empty');
+    }
+
     final db = _db!;
 
     // Check if searcher exists
@@ -477,6 +485,9 @@ class SQLiteNeighborSearchStore implements NeighborSearchStore {
   /// [whereClause] is an optional WHERE clause to filter the data (without the WHERE keyword).
   /// [whereArgs] are optional arguments for the WHERE clause.
   ///
+  /// **Security Note**: Column names and table names are validated to prevent SQL injection.
+  /// However, [whereClause] should only contain trusted input or use parameterized queries.
+  ///
   /// Example:
   ///
   /// ```dart
@@ -507,10 +518,23 @@ class SQLiteNeighborSearchStore implements NeighborSearchStore {
   }) async {
     final db = _db!;
 
-    // Build query
-    final columnList = embeddingColumns.join(', ');
-    var query = 'SELECT $columnList FROM $tableName';
+    // Validate inputs
+    if (embeddingColumns.isEmpty) {
+      throw ArgumentError('embeddingColumns cannot be empty');
+    }
+
+    // Validate table and column names to prevent SQL injection
+    _validateIdentifier(tableName, 'tableName');
+    for (var i = 0; i < embeddingColumns.length; i++) {
+      _validateIdentifier(embeddingColumns[i], 'embeddingColumns[$i]');
+    }
+
+    // Build query with validated identifiers
+    // Note: SQLite doesn't support parameterized column/table names, so we validate them
+    final columnList = embeddingColumns.map((col) => '"$col"').join(', ');
+    var query = 'SELECT $columnList FROM "$tableName"';
     if (whereClause != null) {
+      // whereClause should use parameterized queries (?) for values
       query += ' WHERE $whereClause';
     }
 
@@ -537,7 +561,8 @@ class SQLiteNeighborSearchStore implements NeighborSearchStore {
     stmt.dispose();
 
     if (dataRows.isEmpty) {
-      throw StateError('No data found in table $tableName');
+      throw StateError(
+          'No data found in table "$tableName"${whereClause != null ? " matching WHERE clause" : ""}');
     }
 
     // Create DataFrame and train searcher
@@ -595,6 +620,27 @@ class SQLiteNeighborSearchStore implements NeighborSearchStore {
       seed: seed,
       dtype: dtype,
     );
+  }
+
+  /// Validates that a string is a valid SQLite identifier.
+  ///
+  /// SQLite identifiers must:
+  /// - Start with a letter or underscore
+  /// - Contain only letters, digits, and underscores
+  /// - Not be empty
+  ///
+  /// This helps prevent SQL injection when constructing queries.
+  void _validateIdentifier(String identifier, String parameterName) {
+    if (identifier.isEmpty) {
+      throw ArgumentError('$parameterName cannot be empty');
+    }
+
+    // SQLite identifier regex: must start with letter/underscore, then letters/digits/underscores
+    final identifierPattern = RegExp(r'^[a-zA-Z_][a-zA-Z0-9_]*$');
+    if (!identifierPattern.hasMatch(identifier)) {
+      throw ArgumentError(
+          '$parameterName must be a valid SQLite identifier (letters, digits, underscores only, starting with letter/underscore): "$identifier"');
+    }
   }
 
   String _generateId() {
