@@ -115,4 +115,24 @@ class RandomBinaryProjectionSearcherImpl
   ) {
     return store.loadSearcher(searcherId);
   }
+
+  static Future<RandomBinaryProjectionSearcher> trainFromStore(
+    NeighborSearchStore store,
+    String searcherId, {
+    required int digitCapacity,
+    int? seed,
+    DType dtype = DType.float32,
+  }) async {
+    final data = await store.loadSearcherData(searcherId);
+    if (data == null) {
+      throw ArgumentError('Searcher with ID $searcherId not found');
+    }
+
+    return RandomBinaryProjectionSearcher(
+      data,
+      digitCapacity,
+      seed: seed,
+      dtype: dtype,
+    );
+  }
 }

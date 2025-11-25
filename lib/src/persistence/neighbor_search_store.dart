@@ -1,4 +1,5 @@
 import 'package:ml_algo/src/retrieval/random_binary_projection_searcher/random_binary_projection_searcher.dart';
+import 'package:ml_dataframe/ml_dataframe.dart';
 
 /// Interface for storing and retrieving [RandomBinaryProjectionSearcher] instances.
 ///
@@ -78,4 +79,15 @@ abstract class NeighborSearchStore {
   ///
   /// Throws an exception if the operation fails.
   Future<Map<String, dynamic>?> getSearcherMetadata(String searcherId);
+
+  /// Loads raw data from the store as a DataFrame.
+  ///
+  /// This method is used to load the underlying data that was used to train a searcher,
+  /// enabling retraining workflows. The implementation should reconstruct the DataFrame
+  /// from the stored points and column names.
+  ///
+  /// Returns `null` if the searcher with the given [searcherId] does not exist.
+  ///
+  /// Throws an exception if the load operation fails.
+  Future<DataFrame?> loadSearcherData(String searcherId);
 }

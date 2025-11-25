@@ -5,6 +5,7 @@ import 'package:ml_algo/src/persistence/helpers/dtype_converter.dart';
 import 'package:ml_algo/src/persistence/helpers/matrix_serialization.dart';
 import 'package:ml_algo/src/persistence/neighbor_search_store.dart';
 import 'package:ml_algo/src/retrieval/random_binary_projection_searcher/random_binary_projection_searcher_impl.dart';
+import 'package:ml_dataframe/ml_dataframe.dart';
 import 'package:ml_linalg/dtype.dart';
 import 'package:ml_linalg/matrix.dart';
 import 'package:sqlite3/sqlite3.dart';
@@ -408,6 +409,192 @@ class SQLiteNeighborSearchStore implements NeighborSearchStore {
   void close() {
     _db?.dispose();
     _db = null;
+  }
+
+  @override
+  Future<DataFrame?> loadSearcherData(String searcherId) async {
+    final db = _db!;
+
+    // Check if searcher exists
+    final checkStmt = db.prepare('SELECT id FROM neighbor_searchers WHERE id = ?');
+    final result = checkStmt.select([searcherId]);
+    checkStmt.dispose();
+
+    if (result.isEmpty) {
+      return null;
+    }
+
+    // Load column names
+    final columnStmt = db.prepare('''
+      SELECT column_name
+      FROM searcher_columns
+      WHERE searcher_id = ?
+      ORDER BY column_index
+    ''');
+    final columnRows = columnStmt.select([searcherId]);
+    final columns = columnRows.map((row) => row[0] as String).toList();
+    columnStmt.dispose();
+
+    // Load points
+    final pointStmt = db.prepare('''
+      SELECT vector_data
+      FROM searcher_points
+      WHERE searcher_id = ?
+      ORDER BY point_index
+    ''');
+    final pointRows = pointStmt.select([searcherId]);
+    final pointBlobs = pointRows.map((row) => row[0] as Uint8List).toList();
+    pointStmt.dispose();
+
+    if (pointBlobs.isEmpty) {
+      return null;
+    }
+
+    // Get dtype from first blob
+    final firstBlob = pointBlobs[0];
+    final byteData = ByteData.view(firstBlob.buffer);
+    final dtypeValue = byteData.getUint8(4);
+    final dtype = dtypeValue == 0 ? DType.float32 : DType.float64;
+
+    // Deserialize all rows
+    final rows = <List<num>>[];
+    for (final blob in pointBlobs) {
+      final rowValues = deserializeMatrixRow(blob);
+      rows.add(rowValues);
+    }
+
+    // Create DataFrame
+    return DataFrame(rows, header: columns);
+  }
+
+  /// Trains a new searcher from data stored in a SQLite table.
+  ///
+  /// This method allows you to train a searcher directly from data stored in your
+  /// own SQLite tables, enabling retraining workflows without exporting to CSV/JSON.
+  ///
+  /// [tableName] is the name of the table containing the data.
+  /// [embeddingColumns] is a list of column names that contain the embedding vectors.
+  /// [whereClause] is an optional WHERE clause to filter the data (without the WHERE keyword).
+  /// [whereArgs] are optional arguments for the WHERE clause.
+  ///
+  /// Example:
+  ///
+  /// ```dart
+  /// // Train from all phrases in translations table
+  /// final searcher = await store.trainFromTable(
+  ///   'translations',
+  ///   ['embedding_0', 'embedding_1', 'embedding_2', ...],
+  ///   digitCapacity: 8,
+  /// );
+  ///
+  /// // Train from specific language pairs only
+  /// final searcher = await store.trainFromTable(
+  ///   'translations',
+  ///   ['embedding_0', 'embedding_1', 'embedding_2', ...],
+  ///   digitCapacity: 8,
+  ///   whereClause: 'source_lang = ? AND target_lang = ?',
+  ///   whereArgs: ['en', 'fr'],
+  /// );
+  /// ```
+  Future<RandomBinaryProjectionSearcher> trainFromTable(
+    String tableName,
+    List<String> embeddingColumns, {
+    required int digitCapacity,
+    int? seed,
+    DType dtype = DType.float32,
+    String? whereClause,
+    List<Object>? whereArgs,
+  }) async {
+    final db = _db!;
+
+    // Build query
+    final columnList = embeddingColumns.join(', ');
+    var query = 'SELECT $columnList FROM $tableName';
+    if (whereClause != null) {
+      query += ' WHERE $whereClause';
+    }
+
+    final stmt = db.prepare(query);
+    final rows = whereArgs != null ? stmt.select(whereArgs) : stmt.select([]);
+
+    // Convert to DataFrame
+    final dataRows = <List<num>>[];
+    for (final row in rows) {
+      final dataRow = <num>[];
+      for (var i = 0; i < embeddingColumns.length; i++) {
+        final value = row[i];
+        if (value is num) {
+          dataRow.add(value);
+        } else if (value is String) {
+          dataRow.add(double.parse(value));
+        } else {
+          throw ArgumentError(
+              'Column ${embeddingColumns[i]} contains non-numeric value: $value');
+        }
+      }
+      dataRows.add(dataRow);
+    }
+    stmt.dispose();
+
+    if (dataRows.isEmpty) {
+      throw StateError('No data found in table $tableName');
+    }
+
+    // Create DataFrame and train searcher
+    final data = DataFrame(dataRows, headerExists: false);
+    return RandomBinaryProjectionSearcher(
+      data,
+      digitCapacity,
+      seed: seed,
+      dtype: dtype,
+    );
+  }
+
+  /// Retrains a searcher from its stored data.
+  ///
+  /// This is a convenience method that loads the data from an existing searcher,
+  /// retrains it with new parameters, and optionally saves it with a new ID.
+  ///
+  /// [searcherId] is the ID of the searcher to retrain.
+  /// [digitCapacity] is the new digit capacity (can be different from original).
+  /// [seed] is an optional seed for the new searcher.
+  /// [dtype] is the data type for the new searcher.
+  ///
+  /// Returns the newly trained searcher.
+  ///
+  /// Example:
+  ///
+  /// ```dart
+  /// // Retrain with same parameters
+  /// final retrained = await store.retrainSearcher('old-searcher-id', digitCapacity: 8);
+  ///
+  /// // Retrain with different parameters
+  /// final retrained = await store.retrainSearcher(
+  ///   'old-searcher-id',
+  ///   digitCapacity: 10,
+  ///   seed: 999,
+  /// );
+  ///
+  /// // Save retrained searcher
+  /// final newId = await retrained.saveToStore(store, searcherId: 'new-searcher-id');
+  /// ```
+  Future<RandomBinaryProjectionSearcher> retrainSearcher(
+    String searcherId, {
+    required int digitCapacity,
+    int? seed,
+    DType dtype = DType.float32,
+  }) async {
+    final data = await loadSearcherData(searcherId);
+    if (data == null) {
+      throw ArgumentError('Searcher with ID $searcherId not found');
+    }
+
+    return RandomBinaryProjectionSearcher(
+      data,
+      digitCapacity,
+      seed: seed,
+      dtype: dtype,
+    );
   }
 
   String _generateId() {
